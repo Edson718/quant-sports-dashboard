@@ -1,4 +1,4 @@
-import { BarChart2, Brain, Trophy, DollarSign, TrendingUp, Settings, RefreshCw } from 'lucide-react'
+import { BarChart2, Brain, Trophy, DollarSign, TrendingUp, RefreshCw, X } from 'lucide-react'
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: BarChart2 },
@@ -8,19 +8,36 @@ const navItems = [
   { id: 'evaluation', label: 'Performance', icon: TrendingUp },
 ]
 
-export default function Sidebar({ activeTab, onTabChange, onRefresh, lastUpdated }) {
+export default function Sidebar({ activeTab, onTabChange, onRefresh, lastUpdated, isOpen, onClose }) {
   return (
-    <aside className="w-64 min-h-screen bg-[#13151f] border-r border-[#1e2133] flex flex-col">
+    <aside
+      className={`
+        fixed inset-y-0 left-0 z-30 w-64 bg-[#13151f] border-r border-[#1e2133] flex flex-col
+        transition-transform duration-300 ease-in-out
+        ${isOpen ? 'translate-x-0' : '-translate-x-full'}
+        md:static md:translate-x-0 md:min-h-screen
+      `}
+    >
       {/* Logo */}
       <div className="px-6 py-5 border-b border-[#1e2133]">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-            <BarChart2 size={16} className="text-white" />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
+              <BarChart2 size={16} className="text-white" />
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-white tracking-wide">QUANT SPORTS</h1>
+              <p className="text-[10px] text-slate-500 uppercase tracking-widest">Dashboard</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-sm font-bold text-white tracking-wide">QUANT SPORTS</h1>
-            <p className="text-[10px] text-slate-500 uppercase tracking-widest">Dashboard</p>
-          </div>
+          {/* Close button — mobile only */}
+          <button
+            onClick={onClose}
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1e2133] transition-colors"
+            aria-label="Close menu"
+          >
+            <X size={18} />
+          </button>
         </div>
       </div>
 
