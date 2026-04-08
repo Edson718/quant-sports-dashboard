@@ -5,6 +5,15 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
 
+const normalizeConfidence = (val) => {
+  if (val == null) return null
+  const n = Number(val)
+  return n <= 1 ? n * 100 : n
+}
+
+const isValidTeam = (team) =>
+  team != null && team !== '' && team !== 'Unknown' && team !== 'null' && team !== 'None'
+
 function MiniWidget({ title, children }) {
   return (
     <div className="bg-[#13151f] border border-[#1e2133] rounded-xl p-5">
@@ -44,11 +53,26 @@ const CustomTooltip = ({ active, payload, label }) => {
 }
 
 export default function OverviewPanel() {
-  const { data: predictions } = useSupabaseQuery('ai_predictions', { order: { column: 'created_at', ascending: false }, limit: 5 })
-  const { data: allPredictions } = useSupabaseQuery('ai_predictions', { limit: 500 })
-  const { data: matches } = useSupabaseQuery('matches', { order: { column: 'match_date', ascending: false }, limit: 5 })
-  const { data: bankroll } = useSupabaseQuery('bankroll', { order: { column: 'created_at', ascending: true }, limit: 100 })
-  const { data: evaluation } = useSupabaseQuery('ai_evaluation', { order: { column: 'created_at', ascending: false }, limit: 1 })
+  const { data: recentPredictions } = useSupabaseQuery('ai_predictions', {
+    order: { column: 'match_date', ascending: false },
+    limit: 10,
+  })
+  const { data: allPredictions } = useSupabaseQuery('ai_predictions', {
+    order: { column: 'match_date', ascending: true },
+    limit: 1000,
+  })
+  const { data: matches } = useSupabaseQuery('matches', {
+    order: { column: 'match_date', ascending: false },
+    limit: 5,
+  })
+  const { data: bankroll } = useSupabaseQuery('bankroll', {
+    order: { column: 'created_at', ascending: true },
+    limit: 100,
+  })
+  const { data: evaluation } = useSupabaseQuery('ai_evaluation', {
+    order: { column: 'created_at', ascending: false },
+    limit: 500,
+  })
 
   const currentBalance = (() => {
     const last = bankroll.at(-1)
@@ -56,13 +80,46 @@ export default function OverviewPanel() {
     return val != null ? Number(val) : null
   })()
 
-  const totalPredictions = allPredictions.length
-  const wonPredictions = allPredictions.filter(p => p.result === 'won').length
-  const settledPredictions = allPredictions.filter(p => p.result === 'won' || p.result === 'lost').length
-  const winRate = settledPredictions > 0 ? ((wonPredictions / settledPredictions) * 100).toFixed(1) : null
+  // Filter out invalid teams
+  const validPredictions = allPredictions.filter(p => isValidTeam(p.home_team))
 
+  // Deduplicate by home_team + away_team + match_date
+  const seen = new Set()
+  const dedupedPredictions = validPredictions.filter(p => {
+    const key = `${p.home_team}|${p.away_team}|${p.match_date}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  const totalPredictions = dedupedPredictions.length
+
+  // Win rate from ai_evaluation (most accurate)
+  const recordedEvals = evaluation.filter(r => r.was_correct != null)
+  const evalWins = recordedEvals.filter(r => r.was_correct === true).length
+  const winRateFromEval = recordedEvals.length > 0
+    ? ((evalWins / recordedEvals.length) * 100).toFixed(1)
+    : null
+
+  // Fallback: win rate from ai_predictions.result
+  const settledPreds = dedupedPredictions.filter(p => p.result === 'won' || p.result === 'lost')
+  const wonPreds = settledPreds.filter(p => p.result === 'won').length
+  const winRateFromPreds = settledPreds.length > 0
+    ? ((wonPreds / settledPreds.length) * 100).toFixed(1)
+    : null
+
+  const winRate = winRateFromEval ?? winRateFromPreds
+  const winCount = winRateFromEval != null ? evalWins : wonPreds
+  const settledCount = winRateFromEval != null ? recordedEvals.length : settledPreds.length
+
+  // Model accuracy from ai_evaluation
   const latestEval = evaluation[0]
   const latestAccuracy = latestEval?.accuracy ?? latestEval?.accuracy_rate
+
+  // Avg confidence from ai_predictions
+  const avgConf = dedupedPredictions.length > 0
+    ? (dedupedPredictions.reduce((sum, p) => sum + (normalizeConfidence(p.ai_confidence) || 0), 0) / dedupedPredictions.length).toFixed(1)
+    : null
 
   const chartData = bankroll.map((row, i) => ({
     date: row.created_at
@@ -70,6 +127,11 @@ export default function OverviewPanel() {
       : `#${i + 1}`,
     balance: Number(row.balance ?? row.amount ?? row.bankroll ?? row.total ?? 0),
   }))
+
+  // Recent predictions filtered
+  const recentValid = recentPredictions
+    .filter(p => isValidTeam(p.home_team))
+    .slice(0, 5)
 
   return (
     <div className="space-y-6">
@@ -81,30 +143,37 @@ export default function OverviewPanel() {
       {/* Top stats */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
-          title="Current Bankroll"
-          value={currentBalance != null ? `$${currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
+          title="Saldo Bancário"
+          value={currentBalance != null
+            ? `$${currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+            : '—'}
           icon={DollarSign}
           color="violet"
         />
         <StatCard
-          title="Total Predictions"
-          value={totalPredictions || '—'}
+          title="Previsões Totais"
+          value={totalPredictions > 0 ? totalPredictions : '—'}
           icon={Brain}
           color="blue"
         />
         <StatCard
-          title="Win Rate"
+          title="Taxa de Vitórias"
           value={winRate != null ? `${winRate}%` : '—'}
           icon={TrendingUp}
           color={winRate >= 55 ? 'green' : winRate != null ? 'amber' : 'violet'}
           trend={winRate >= 55 ? 'up' : winRate != null ? 'down' : undefined}
-          trendValue={winRate != null ? `${wonPredictions}/${settledPredictions} bets` : undefined}
+          trendValue={winRate != null ? `${winCount}/${settledCount} apostas` : undefined}
         />
         <StatCard
-          title="Model Accuracy"
-          value={latestAccuracy != null ? `${Number(latestAccuracy).toFixed(1)}%` : '—'}
+          title="Precisão do Modelo"
+          value={latestAccuracy != null
+            ? `${Number(latestAccuracy).toFixed(1)}%`
+            : avgConf != null
+            ? `${avgConf}%`
+            : '—'}
+          subtitle={latestAccuracy == null && avgConf != null ? 'Confiança média' : undefined}
           icon={Activity}
-          color={latestAccuracy >= 60 ? 'green' : 'amber'}
+          color={latestAccuracy >= 60 || avgConf >= 60 ? 'green' : 'amber'}
         />
       </div>
 
@@ -132,25 +201,26 @@ export default function OverviewPanel() {
 
       {/* Recent activity panels */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <MiniWidget title="Recent Predictions">
-          {predictions.length === 0
-            ? <p className="text-sm text-slate-500 text-center py-4">No predictions yet</p>
-            : predictions.map((p, i) => (
-              <RecentItem
-                key={p.id || i}
-                left={p.home_team && p.away_team
-                ? `${p.home_team} vs ${p.away_team}`
-                : p.match_name || p.event || p.match_id || '—'}
-                sub={p.prediction || p.predicted_outcome}
-                right={p.confidence != null ? `${p.confidence}%` : '—'}
-                badge={p.result || 'pending'}
-                badgeColor={
-                  p.result === 'won' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                  p.result === 'lost' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                  'bg-slate-700/50 text-slate-400 border-slate-600/30'
-                }
-              />
-            ))
+        <MiniWidget title="Previsões Recentes">
+          {recentValid.length === 0
+            ? <p className="text-sm text-slate-500 text-center py-4">Sem previsões disponíveis</p>
+            : recentValid.map((p, i) => {
+              const conf = normalizeConfidence(p.ai_confidence)
+              return (
+                <RecentItem
+                  key={p.id || i}
+                  left={`${p.home_team} vs ${p.away_team}`}
+                  sub={p.ai_decision || p.league_name}
+                  right={conf != null ? `${conf.toFixed(1)}%` : '—'}
+                  badge={p.result || 'pending'}
+                  badgeColor={
+                    p.result === 'won' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                    p.result === 'lost' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                    'bg-slate-700/50 text-slate-400 border-slate-600/30'
+                  }
+                />
+              )
+            })
           }
         </MiniWidget>
 
